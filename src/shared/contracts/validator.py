@@ -1,7 +1,7 @@
 import os
-import re
 from pathlib import Path
 from shared.errors.base import ValidationError
+from python_shared import ValidationRules
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 RECOMPUTE_CONTRACT: Path = BASE_DIR / "contracts" / "workflows" / "recompute_quality_baseline.yaml"
@@ -9,10 +9,10 @@ ROLLUP_CONTRACT: Path = BASE_DIR / "contracts" / "workflows" / "rollup_quality_t
 QUALITY_SCORE_CONTRACT: Path = BASE_DIR / "contracts" / "workflows" / "quality_score_workflow.yaml"
 
 def _extract_val(text: str, pattern: str) -> str:
-    m = re.search(pattern, text, re.MULTILINE)
-    if not m:
-        raise ValidationError(f"Missing expected pattern in contract: {pattern}")
-    return m.group(1).strip()
+    try:
+        return ValidationRules.extract_pattern(text, pattern)
+    except ValueError as e:
+        raise ValidationError(str(e))
 
 
 def load_workflow_contracts() -> dict:
