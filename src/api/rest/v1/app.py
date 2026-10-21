@@ -7,6 +7,8 @@ from api.rest.v1.router import router as v1_router
 from shared.di.providers import build_alert_publisher, build_scorer_client, build_quality_score_repo
 from python_shared.discovery import register_fastapi_service
 
+from python_shared.http.middleware.correlation_middleware import CorrelationAndTelemetryMiddleware
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Quality Engine",
@@ -14,6 +16,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
+    app.add_middleware(CorrelationAndTelemetryMiddleware)
     app.mount("/metrics", make_asgi_app())
     app.state.alert_publisher = build_alert_publisher()
     app.state.scorer_client = build_scorer_client()

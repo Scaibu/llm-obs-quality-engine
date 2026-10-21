@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import os
 import logging
-import httpx
+from typing import Optional
+from python_shared.http import ResilientHttpClient
 from shared.ports.scorer_client_port import ScorerClientPort
 
 logger = logging.getLogger("quality-engine.http-scorer-client")
 
 
 class HttpScorerClientAdapter(ScorerClientPort):
-    def __init__(self) -> None:
-        self.coherence_url = os.environ.get("COHERENCE_SERVICE_URL", "http://localhost:8005")
-        self.faithfulness_url = os.environ.get("FAITHFULNESS_SERVICE_URL", "http://localhost:8006")
-        self.toxicity_url = os.environ.get("TOXICITY_SERVICE_URL", "http://localhost:8007")
-        self.perplexity_url = os.environ.get("PERPLEXITY_SERVICE_URL", "http://localhost:8008")
+    def __init__(self, profile: str = "api_service") -> None:
+        self.coherence_url: str = os.environ.get("COHERENCE_SERVICE_URL", "http://localhost:8005")
+        self.faithfulness_url: str = os.environ.get("FAITHFULNESS_SERVICE_URL", "http://localhost:8006")
+        self.toxicity_url: str = os.environ.get("TOXICITY_SERVICE_URL", "http://localhost:8007")
+        self.perplexity_url: str = os.environ.get("PERPLEXITY_SERVICE_URL", "http://localhost:8008")
+        self._client: ResilientHttpClient = ResilientHttpClient(profile=profile, timeout=5.0)
 
     def get_coherence_score(
         self,
@@ -36,13 +38,12 @@ class HttpScorerClientAdapter(ScorerClientPort):
             "response_embedding": response_embedding,
         }
         try:
-            with httpx.Client(timeout=5.0) as client:
-                r = client.post(url, json=payload)
-                if r.status_code == 200:
-                    data = r.json()
-                    prim = data.get("primary")
-                    if prim:
-                        return prim.get("score")
+            r = self._client.post(url, json=payload, headers={"x-trace-id": trace_id})
+            if r.status_code == 200:
+                data = r.json()
+                prim = data.get("primary")
+                if prim:
+                    return prim.get("score")
         except Exception as e:
             logger.error("Error querying coherence scorer: %s", e)
         return None
@@ -58,7 +59,6 @@ class HttpScorerClientAdapter(ScorerClientPort):
     ) -> float | None:
         if response_text is None or completion_tokens is None:
             return None
-        # RAG context check: If absent or < 50 chars, faithfulness_score=null, proceed
         if rag_context is None or len(rag_context) < 50:
             return None
 
@@ -72,12 +72,10 @@ class HttpScorerClientAdapter(ScorerClientPort):
             "finish_reason": finish_reason,
         }
         try:
-            # Call NLI-worker query with 2000ms timeout
-            with httpx.Client(timeout=2.0) as client:
-                r = client.post(url, json=payload)
-                if r.status_code == 200:
-                    data = r.json()
-                    return data.get("score")
+            r = self._client.post(url, json=payload, headers={"x-trace-id": trace_id})
+            if r.status_code == 200:
+                data = r.json()
+                return data.get("score")
         except Exception as e:
             logger.error("Error querying faithfulness scorer: %s", e)
         return None
@@ -97,10 +95,9 @@ class HttpScorerClientAdapter(ScorerClientPort):
             "response_text": response_text,
         }
         try:
-            with httpx.Client(timeout=0.2) as client:
-                r = client.post(url, json=payload)
-                if r.status_code == 200:
-                    return r.json().get("score")
+            r = self._client.post(url, json=payload, headers={"x-trace-id": trace_id})
+            if r.status_code == 200:
+                return r.json().get("score")
         except Exception as e:
             logger.error("Error querying toxicity scorer: %s", e)
         return None
@@ -115,7 +112,6 @@ class HttpScorerClientAdapter(ScorerClientPort):
         token_logprobs: list[float] | None,
         finish_reason: str | None,
     ) -> float | None:
-        """Returns raw perplexity float or None. Does not include the high_perplexity flag."""
         perplexity, _ = self.get_perplexity_result(
             trace_id=trace_id,
             span_id=span_id,
@@ -137,12 +133,6 @@ class HttpScorerClientAdapter(ScorerClientPort):
         token_logprobs: list[float] | None,
         finish_reason: str | None,
     ) -> tuple[float | None, bool]:
-        """
-        Returns (perplexity, high_perplexity_flag).
-        high_perplexity_flag is extracted from the perplexity-worker response field
-        'high_perplexity_flag' (set by PerplexityBaselineLoader in Step 3.1).
-        Returns (None, False) on timeout or validation failure.
-        """
         if response_text is None or completion_tokens is None or not prompt_type:
             return None, False
         url = f"{self.perplexity_url}/v1/score/perplexity"
@@ -156,13 +146,12 @@ class HttpScorerClientAdapter(ScorerClientPort):
             "finish_reason": finish_reason,
         }
         try:
-            with httpx.Client(timeout=5.0) as client:
-                r = client.post(url, json=payload)
-                if r.status_code == 200:
-                    data = r.json()
-                    perplexity = data.get("perplexity")
-                    high_flag: bool = bool(data.get("high_perplexity_flag", False))
-                    return perplexity, high_flag
+            r = self._client.post(url, json=payload, headers={"x-trace-id": trace_id})
+            if r.status_code == 200:
+                data = r.json()
+                perplexity = data.get("perplexity")
+                high_flag: bool = bool(data.get("high_perplexity_flag", False))
+                return perplexity, high_flag
         except Exception as e:
             logger.error("Error querying perplexity scorer: %s", e)
         return None, False
